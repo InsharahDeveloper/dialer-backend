@@ -64,6 +64,11 @@ exports.handleOutgoingCall = async (req, res) => {
     const user = callerId ? await User.findById(callerId) : null;
     const fromNumber = user?.twilioNumber || process.env.TWILIO_FALLBACK_NUMBER;
 
+  twiml.say(
+  { voice: "alice" },
+  "This call may be recorded for quality and training purposes."
+);
+
     const dial = twiml.dial({
       callerId: fromNumber,
       answerOnBridge: true,
@@ -80,6 +85,21 @@ exports.handleOutgoingCall = async (req, res) => {
     console.error("handleOutgoingCall:", err);
     twiml.say("Sorry, an error occurred.");
   }
+
+  const { To, From, CallSid } = req.body;
+const userId = req.body.userId || req.user?._id; 
+// userId frontend se TwiML param ya JWT se nikalein
+
+await Call.create({
+      owner : owner._id,
+      direction: "incoming",
+      from: From,
+      to: To,
+      status: "queued",
+      twilioCallSid: req.body.CallSid,
+      startedAt : newDate()
+    });
+
 
   res.type("text/xml").send(twiml.toString());
 };
@@ -102,12 +122,13 @@ exports.handleIncomingCall = async (req, res) => {
 
     // Persist
     const call = await Call.create({
-      user: owner._id,
+      owner : owner._id,
       direction: "incoming",
       from: From,
       to: To,
       status: "ringing",
       twilioCallSid: req.body.CallSid,
+      startedAt : newDate()
     });
 
     emitToUser(req, owner._id, "incoming-call", {
@@ -151,15 +172,15 @@ exports.handleCallStatus = async (req, res) => {
     const ownerNumber = Direction === "inbound" ? To : From;
     const owner = await User.findOne({ twilioNumber: ownerNumber });
 
-    const update = {
-      status: CallStatus,
-      duration: CallDuration ? Number(CallDuration) : undefined,
-      recordingUrl: RecordingUrl ? `${RecordingUrl}.mp3` : undefined,
-      recordingSid: RecordingSid,
-      endedAt: ["completed", "failed", "busy", "no-answer", "canceled"].includes(CallStatus)
-        ? new Date()
-        : undefined,
-    };
+const update = { status: CallStatus };
+if (CallDuration) update.duration = Number(CallDuration);
+if (RecordingUrl) update.recordingUrl = RecordingUrl;
+if (RecordingSid) update.recordingSid = RecordingSid;
+if (["completed","busy","no-answer","failed","canceled"].includes(CallStatus)) {
+  update.endedAt = new Date();
+}
+
+if (CallStatus === "no-answer") update.status = "missed";
 
     Object.keys(update).forEach((k) => update[k] === undefined && delete update[k]);
 
@@ -194,12 +215,13 @@ exports.handleVoicemail = async (req, res) => {
   try {
     const owner = await User.findOne({ twilioNumber: To });
     twiml.say("Please leave a message after the beep.");
-    twiml.record({
-      maxLength: 60,
-      action: `${process.env.PUBLIC_URL}/api/twilio/status`,
-      transcribe: true,
-      transcribeCallback: `${process.env.PUBLIC_URL}/api/twilio/transcription?ownerId=${owner?._id || ""}`,
-    });
+twiml.record({
+  action: "/api/twilio/voicemail",   // ✅ alag endpoint
+  transcribe: true,
+  transcribeCallback: `${process.env.PUBLIC_URL}/api/twilio/transcription?ownerId=${owner?._id || ""}`,
+  maxLength: 60,
+  playBeep: true
+});
     twiml.hangup();
   } catch (err) {
     console.error("handleVoicemail:", err);
@@ -249,6 +271,11 @@ exports.handleTranscription = async (req, res) => {
 // 7. Outbound SMS (authenticated user)
 // ---------------------------------------------
 exports.sendSMS = async (req, res) => {
+
+  const blocked = await OptOut.findOne({ phone: to, optedOut: true });
+  if (blocked) throw new Error("Recipient has opted out");
+
+
   try {
     const { to, body } = req.body;
     const user = await User.findById(req.user._id);
@@ -317,6 +344,28 @@ exports.sendVoiceMessage = async (req, res) => {
 // ---------------------------------------------
 exports.handleIncomingSMS = async (req, res) => {
   const twiml = new MessagingResponse();
+
+  const STOP_WORDS = ["STOP","STOPALL","UNSUBSCRIBE","CANCEL","END","QUIT"];
+  const START_WORDS = ["START","UNSTOP","YES"];
+
+   if (STOP_WORDS.includes(text)) {
+    await OptOut.updateOne(
+      { phone: From },
+      { phone: From, optedOut: true, updatedAt: new Date() },
+      { upsert: true }
+    );
+    const twiml = new twilio.twiml.MessagingResponse();
+    twiml.message("You have been unsubscribed. Reply START to opt back in.");
+    return res.type("text/xml").send(twiml.toString());
+  }
+
+  if (START_WORDS.includes(text)) {
+    await OptOut.updateOne({ phone: From }, { optedOut: false });
+    const twiml = new twilio.twiml.MessagingResponse();
+    twiml.message("You are resubscribed.");
+    return res.type("text/xml").send(twiml.toString());
+  }
+
   try {
     const { To, From, Body, MessageSid, NumMedia, MediaUrl0 } = req.body;
 

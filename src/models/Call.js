@@ -7,7 +7,13 @@ const CallSchema = new mongoose.Schema(
     contact:    { type: mongoose.Schema.Types.ObjectId, ref: "Contact", default: null  }, // null = unknown number
     
     direction:  { type: String, enum: ["incoming", "outgoing"], required: true },
-    status:     { type: String, enum: ["completed", "missed", "rejected", "busy"], default: "completed" },
+    status:     { type: String, enum:[
+      "queued", "ringing", "in-progress",
+      "completed", "missed", "rejected",
+      "busy", "no-answer", "failed", "canceled"
+    ],
+    default: "queued"
+  },
     
     from:       { type: String, required: true }, // phone number
     to:         { type: String, required: true }, // phone number
@@ -17,6 +23,11 @@ const CallSchema = new mongoose.Schema(
     // Twilio se aata hai
     twilioCallSid: { type: String, default: "" },
     recordingUrl:  { type: String, default: null },
+
+    recordingUrl: { type: String },
+    recordingSid: { type: String },
+    voicemailUrl: { type: String },
+    transcription: { type: String },
     
     startedAt:  { type: Date, default: Date.now },
     endedAt:    { type: Date, default: null },
