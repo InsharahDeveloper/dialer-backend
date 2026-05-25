@@ -1,26 +1,24 @@
-// src/routes/twilio.js
-const express  = require("express");
-const router   = express.Router();
-const { protect } = require("../middleware/auth");
+const express = require("express");
+const twilio = require("twilio");
+const auth = require("../middleware/auth");
+const ctrl = require("../controllers/twilioController");
 
-const {
-  generateAccessToken,
-  handleOutgoingCall,
-  handleIncomingCall,
-  handleCallStatus,
-  handleVoicemail,
-  handleTranscription,
-} = require("../controllers/twilioController");
+const router = express.Router();
 
-// Protected — frontend ke liye
-router.get("/token",    protect, generateAccessToken);
+// Twilio signature validator for public webhooks
+const validateTwilio = twilio.webhook({ validate: true });
 
-// Webhooks — Twilio directly call karta hai, protect nahi
-// Twilio ka apna signature verification hoga (production mein)
-router.post("/voice",         handleOutgoingCall);
-router.post("/incoming",      handleIncomingCall);
-router.post("/status",        handleCallStatus);
-router.post("/voicemail",     handleVoicemail);
-router.post("/transcription", handleTranscription);
+// ---------- Authenticated app routes ----------
+router.get("/token",          auth, ctrl.getAccessToken);
+router.post("/sms",           auth, ctrl.sendSMS);
+router.post("/voice-message", auth, ctrl.sendVoiceMessage);
+
+// ---------- Public Twilio webhooks (signed) ----------
+router.post("/voice",         validateTwilio, ctrl.handleOutgoingCall);   // browser → PSTN
+router.post("/incoming",      validateTwilio, ctrl.handleIncomingCall);   // PSTN → browser
+router.post("/status",        validateTwilio, ctrl.handleCallStatus);
+router.post("/voicemail",     validateTwilio, ctrl.handleVoicemail);
+router.post("/transcription", validateTwilio, ctrl.handleTranscription);
+router.post("/sms-incoming",  validateTwilio, ctrl.handleIncomingSMS);
 
 module.exports = router;

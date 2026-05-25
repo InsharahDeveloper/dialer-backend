@@ -18,7 +18,7 @@ const loginLimiter = rateLimit({
   legacyHeaders:   false,
 });
 
-router.post("/register", register);
+
 router.post("/login",    loginLimiter, login); // ← limiter sirf yahan
 
 router.get("/me", protect, getMe);
