@@ -31,6 +31,25 @@ app.get("/health", (req, res) => {
     return res.json({ status: "ok" });
   }
 
+
+const connectedUsers = new Map(); // userId -> Set<socketId>
+app.set("io", io);
+app.set("connectedUsers", connectedUsers);
+
+io.on("connection", (socket) => {
+  const userId = socket.handshake.auth?.userId; // frontend se bhejna hai
+  if (!userId) return socket.disconnect();
+
+  if (!connectedUsers.has(userId)) connectedUsers.set(userId, new Set());
+  connectedUsers.get(userId).add(socket.id);
+
+  socket.on("disconnect", () => {
+    const set = connectedUsers.get(userId);
+    if (set) { set.delete(socket.id); if (!set.size) connectedUsers.delete(userId); }
+  });
+});
+
+
   // Development mein detailed info
   res.json({
     status:    "ok",
