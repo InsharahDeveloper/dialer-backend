@@ -53,7 +53,7 @@ exports.getAccessToken = async (req, res) => {
 // ---------------------------------------------
 exports.handleOutgoingCall = async (req, res) => {
   const twiml = new VoiceResponse();
-  const { To, From } = req.body;
+  const { To, From, CallSid} = req.body;
 
   try {
     // From = "client:<userId>"
@@ -86,7 +86,6 @@ exports.handleOutgoingCall = async (req, res) => {
     twiml.say("Sorry, an error occurred.");
   }
 
-  const { To, From, CallSid } = req.body;
 const userId = req.body.userId || req.user?._id; 
 // userId frontend se TwiML param ya JWT se nikalein
 

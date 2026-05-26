@@ -15,7 +15,7 @@ const smsLimiter = rateLimit({
 });
 
 // ---------- Authenticated routes ----------
-router.get("/token",          protect, ctrl.getAccessToken);
+router.get("/token", protect, ctrl.getAccessToken);
 router.post("/sms", smsLimiter ,  protect, ctrl.sendSMS);
 router.post("/voice-message", protect, ctrl.sendVoiceMessage);
 
