@@ -27,7 +27,7 @@ const MessageSchema = new mongoose.Schema(
       enum:    ["text", "voice", "image", "file", "system"],
       default: "text",
     },
-
+    direction: { type: String, enum: ["incoming", "outgoing"], default: "outgoing" },
     // Voice message ke liye (Twilio recording ya uploaded audio)
     audioUrl:     { type: String, default: null },
     audioDuration:{ type: Number, default: 0 }, // seconds

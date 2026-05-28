@@ -24,3 +24,4 @@ router.patch("/:id/played",    markAsPlayed);    // PATCH  /api/voice-mails/:id/
 router.delete("/:id",          deleteVoiceMail); // DELETE /api/voice-mails/:id
 
 module.exports = router;
+

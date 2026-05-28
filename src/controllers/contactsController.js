@@ -97,31 +97,51 @@ const getContact = async (req, res) => {
 };
 
 // ─── PUT /api/contacts/:id ────────────────────────────────────────────────────
+// ─── PUT /api/contacts/:id ────────────────────────────────────────────────────
+// Improved with duplicate phone check
 const updateContact = async (req, res) => {
   try {
     const { name, phone, email, company, role, location, isFavorite, notes } = req.body;
 
-    const contact = await Contact.findOneAndUpdate(
+    // Pehle existing contact find karo (owner check already)
+    const existingContact = await Contact.findOne({
+      _id: req.params.id,
+      owner: req.user._id,
+    });
+
+    if (!existingContact) {
+      return res.status(404).json({ message: "Contact nahi mila" });
+    }
+
+    // Agar phone number change ho raha hai, toh duplicate check karo
+    if (phone && phone !== existingContact.phone) {
+      const duplicate = await Contact.findOne({
+        owner: req.user._id,
+        phone: phone,
+        _id: { $ne: req.params.id }, // current contact ke alawa
+      });
+      if (duplicate) {
+        return res.status(400).json({ message: "Yeh phone number already exist karta hai" });
+      }
+    }
+
+    // Ab update karo
+    const updatedContact = await Contact.findOneAndUpdate(
       { _id: req.params.id, owner: req.user._id },
       { name, phone, email, company, role, location, isFavorite, notes },
       { new: true, runValidators: true }
     );
 
-    if (!contact) {
-      return res.status(404).json({ message: "Contact nahi mila" });
-    }
-
     res.json({
       success: true,
       message: "Contact update ho gaya",
-      contact,
+      contact: updatedContact,
     });
   } catch (err) {
     console.error("updateContact error:", err);
     res.status(500).json({ message: "Server error" });
   }
 };
-
 // ─── DELETE /api/contacts/:id ─────────────────────────────────────────────────
 const deleteContact = async (req, res) => {
   try {

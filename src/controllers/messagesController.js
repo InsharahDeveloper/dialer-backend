@@ -1,20 +1,18 @@
 // src/controllers/messagesController.js
-
 const Conversation = require("../models/Conversation");
 const Message      = require("../models/Message");
 const Contact      = require("../models/Contact");
 
 // ─── GET /api/messages ────────────────────────────────────────────────────────
-// Logged-in user ki saari conversations (sidebar list)
 const getConversations = async (req, res) => {
   try {
     const conversations = await Conversation.find({ owner: req.user._id })
-      .populate("contact", "name phone avatar") // contact ka naam aayega
-      .sort({ "lastMessage.sentAt": -1 });       // latest pehle
+      .populate("contact", "name phone avatar")
+      .sort({ "lastMessage.sentAt": -1 });
 
     res.json({
-      success:       true,
-      count:         conversations.length,
+      success: true,
+      count:   conversations.length,
       conversations,
     });
   } catch (err) {
@@ -24,13 +22,11 @@ const getConversations = async (req, res) => {
 };
 
 // ─── GET /api/messages/:conversationId ───────────────────────────────────────
-// Ek conversation ke saare messages (chat history)
 const getMessages = async (req, res) => {
   try {
     const { conversationId } = req.params;
     const { page = 1, limit = 50 } = req.query;
 
-    // Pehle verify karo — yeh conversation is user ki hai?
     const conversation = await Conversation.findOne({
       _id:   conversationId,
       owner: req.user._id,
@@ -40,7 +36,7 @@ const getMessages = async (req, res) => {
       return res.status(404).json({ message: "Conversation nahi mili" });
     }
 
-    // Messages load karo — oldest first (chat style)
+    // Messages load karo
     const messages = await Message.find({ conversation: conversationId })
       .populate("sender",  "name avatar")
       .populate("replyTo", "text sender type")
@@ -48,21 +44,30 @@ const getMessages = async (req, res) => {
       .skip((page - 1) * limit)
       .limit(Number(limit));
 
-    // Unread messages read mark karo
-    await Message.updateMany(
-      {
-        conversation: conversationId,
-        readBy:       { $nin: [req.user._id] }, // jo abhi read nahi hue
-      },
-      { $addToSet: { readBy: req.user._id } }
-    );
+    // ✅ Improvement 1: sirf agar unread messages hain to mark read + reset unreadCount
+    const unreadMessages = await Message.countDocuments({
+      conversation: conversationId,
+      readBy: { $nin: [req.user._id] },
+    });
 
-    // Conversation ka unread count reset karo
-    await Conversation.findByIdAndUpdate(conversationId, { unreadCount: 0 });
+    if (unreadMessages > 0) {
+      await Message.updateMany(
+        {
+          conversation: conversationId,
+          readBy: { $nin: [req.user._id] },
+        },
+        { $addToSet: { readBy: req.user._id } }
+      );
+
+      // Agar unreadCount pehle se 0 nahi hai to reset karo
+      if (conversation.unreadCount > 0) {
+        await Conversation.findByIdAndUpdate(conversationId, { unreadCount: 0 });
+      }
+    }
 
     res.json({
-      success:      true,
-      count:        messages.length,
+      success: true,
+      count:   messages.length,
       conversation,
       messages,
     });
@@ -72,7 +77,6 @@ const getMessages = async (req, res) => {
   }
 };
 
-// Naya message bhejo
 // ─── POST /api/messages/:conversationId ──────────────────────────────────────
 const sendMessage = async (req, res) => {
   try {
@@ -95,29 +99,18 @@ const sendMessage = async (req, res) => {
     const message = await Message.create({
       conversation:  conversationId,
       sender:        req.user._id,
-      text:          text          || "",
+      text:          text || "",
       type,
-      audioUrl:      audioUrl      || null,
+      audioUrl:      audioUrl || null,
       audioDuration: audioDuration || 0,
-      replyTo:       replyTo       || null,
+      replyTo:       replyTo || null,
       readBy:        [req.user._id],
     });
 
-    await message.populate("sender",  "name avatar");
+    await message.populate("sender", "name avatar");
     await message.populate("replyTo", "text sender type");
 
-    // ✅ FIX: Check karo — kya sender ne conversation already kholi hui hai?
-    // Agar sender hi owner hai aur woh active hai, unreadCount mat badhao
-    // Lekin is model mein hum yeh track nahi kar sakte directly.
-    //
-    // Simplest correct approach: 
-    // Owner (sender) ka unread kabhi nahi badhta — 
-    // kyunki yeh conversation SIRF owner ki hai (owner: req.user._id)
-    // Dusri taraf contact ka unread separately track nahi ho raha is model mein.
-    //
-    // Isliye: sendMessage pe unreadCount increment BILKUL MAT KARO
-    // Sirf tab increment karo jab INCOMING message aaye (contact ne bheja ho)
-
+    // Last message update (unreadCount nahi badhana kyunki sender khud hai)
     await Conversation.findByIdAndUpdate(conversationId, {
       lastMessage: {
         text:     text || (type === "voice" ? "🎤 Voice message" : "📎 File"),
@@ -125,8 +118,6 @@ const sendMessage = async (req, res) => {
         sentAt:   new Date(),
         senderId: req.user._id,
       },
-      // ✅ unreadCount increment NAHI — sender khud bhej raha hai
-      // unreadCount sirf tab badhega jab incoming message aayega
     });
 
     const io = req.app.get("io");
@@ -145,7 +136,6 @@ const sendMessage = async (req, res) => {
 };
 
 // ─── POST /api/messages/conversation ─────────────────────────────────────────
-// Naya conversation start karo (ya existing dhundho)
 const getOrCreateConversation = async (req, res) => {
   try {
     const { contactId } = req.body;
@@ -154,7 +144,6 @@ const getOrCreateConversation = async (req, res) => {
       return res.status(400).json({ message: "contactId required hai" });
     }
 
-    // Contact verify karo
     const contact = await Contact.findOne({
       _id:   contactId,
       owner: req.user._id,
@@ -164,7 +153,6 @@ const getOrCreateConversation = async (req, res) => {
       return res.status(404).json({ message: "Contact nahi mila" });
     }
 
-    // Existing conversation dhundho — nahi mila toh banao
     let conversation = await Conversation.findOne({
       owner:   req.user._id,
       contact: contactId,
@@ -178,10 +166,7 @@ const getOrCreateConversation = async (req, res) => {
       await conversation.populate("contact", "name phone avatar");
     }
 
-    res.json({
-      success:      true,
-      conversation,
-    });
+    res.json({ success: true, conversation });
   } catch (err) {
     console.error("getOrCreateConversation error:", err);
     res.status(500).json({ message: "Server error" });
@@ -189,32 +174,73 @@ const getOrCreateConversation = async (req, res) => {
 };
 
 // ─── DELETE /api/messages/:conversationId/message/:messageId ─────────────────
-// Message delete karo
+// ✅ Improvement 2: Delete ke baad lastMessage update karo agar yehi last tha
 const deleteMessage = async (req, res) => {
   try {
-    const { messageId } = req.params;
+    const { conversationId, messageId } = req.params;
 
+    // Verify message belongs to user and conversation
     const message = await Message.findOne({
       _id:    messageId,
-      sender: req.user._id, // sirf apna message delete kar sakte hain
+      sender: req.user._id,
+      conversation: conversationId,
     });
 
     if (!message) {
       return res.status(404).json({ message: "Message nahi mila" });
     }
 
-    // Soft delete — text hata do
+    // Soft delete
     message.isDeleted = true;
     message.text      = "";
     message.audioUrl  = null;
     await message.save();
 
-    // Socket.io se notify karo
+    // Check if this was the last message in the conversation
+    const conversation = await Conversation.findOne({
+      _id: conversationId,
+      owner: req.user._id,
+    });
+
+    if (conversation && conversation.lastMessage) {
+      // Find the most recent non-deleted message in this conversation
+      const lastActiveMessage = await Message.findOne({
+        conversation: conversationId,
+        isDeleted: false,
+      }).sort({ createdAt: -1 });
+
+      if (lastActiveMessage) {
+        // Update lastMessage with the new latest message
+        let previewText = lastActiveMessage.text;
+        if (!previewText && lastActiveMessage.type === "voice") previewText = "🎤 Voice message";
+        else if (!previewText) previewText = "📎 File";
+
+        await Conversation.findByIdAndUpdate(conversationId, {
+          lastMessage: {
+            text:     previewText,
+            type:     lastActiveMessage.type,
+            sentAt:   lastActiveMessage.createdAt,
+            senderId: lastActiveMessage.sender,
+          },
+        });
+      } else {
+        // No messages left – clear lastMessage
+        await Conversation.findByIdAndUpdate(conversationId, {
+          lastMessage: {
+            text:     "",
+            type:     "text",
+            sentAt:   null,
+            senderId: null,
+          },
+        });
+      }
+    }
+
     const io = req.app.get("io");
     if (io) {
-      io.to(`conversation-${message.conversation}`).emit("message-deleted", {
+      io.to(`conversation-${conversationId}`).emit("message-deleted", {
         messageId,
-        conversationId: message.conversation,
+        conversationId,
       });
     }
 

@@ -1,60 +1,64 @@
-// src/server.js
 require("dotenv").config();
-const http      = require("http");
-const express   = require("express");
-const cors      = require("cors");
+const http = require("http");
+const express = require("express");
+const cors = require("cors");
 const connectDB = require("./config/db");
 const { setupSocket } = require("./socket");
 
 const app = express();
 
-// ─── DB ───────────────────────────────────────────────────────────────────────
+// DB
 connectDB();
 
-// ─── Middleware ───────────────────────────────────────────────────────────────
+// Middleware
 app.use(cors({ origin: [process.env.CLIENT_URL, /^https?:\/\/192\.168\./], credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ─── REST Routes ──────────────────────────────────────────────────────────────
-app.use("/api/auth",        require("./routes/auth"));
-app.use("/api/contacts",    require("./routes/contacts"));
-app.use("/api/calls",       require("./routes/calls"));
+// Routes (before socket setup, as they don't depend on io)
+app.use("/api/auth", require("./routes/auth"));
+app.use("/api/contacts", require("./routes/contacts"));
+app.use("/api/calls", require("./routes/calls"));
 app.use("/api/voice-mails", require("./routes/voiceMails"));
-app.use("/api/messages",    require("./routes/messages"));   // ← NEW
-app.use("/api/twilio",   require("./routes/twilio"));     // Phase 6
+app.use("/api/messages", require("./routes/messages"));
+app.use("/api/twilio", require("./routes/twilio"));
 
-// ─── Health check ─────────────────────────────────────────────────────────────
-app.get("/health", (req, res) => {
-  // Production mein minimal response
-  if (process.env.NODE_ENV === "production") {
-    return res.json({ status: "ok" });
-  }
-
-
-const connectedUsers = new Map(); // userId -> Set<socketId>
+// --- Create HTTP server & Socket.io ---
+const server = http.createServer(app);
+const io = setupSocket(server);
 app.set("io", io);
+
+// Optional: connectedUsers map for real-time presence
+const connectedUsers = new Map(); // userId -> Set of socketIds
 app.set("connectedUsers", connectedUsers);
 
 io.on("connection", (socket) => {
-  const userId = socket.handshake.auth?.userId; // frontend se bhejna hai
-  if (!userId) return socket.disconnect();
-
+  const userId = socket.handshake.auth?.userId;
+  if (!userId) {
+    socket.disconnect();
+    return;
+  }
   if (!connectedUsers.has(userId)) connectedUsers.set(userId, new Set());
   connectedUsers.get(userId).add(socket.id);
 
   socket.on("disconnect", () => {
     const set = connectedUsers.get(userId);
-    if (set) { set.delete(socket.id); if (!set.size) connectedUsers.delete(userId); }
+    if (set) {
+      set.delete(socket.id);
+      if (set.size === 0) connectedUsers.delete(userId);
+    }
   });
 });
 
-
-  // Development mein detailed info
+// --- Health check (must come after all setup) ---
+app.get("/health", (req, res) => {
+  if (process.env.NODE_ENV === "production") {
+    return res.json({ status: "ok" });
+  }
   res.json({
-    status:    "ok",
-    database:  "connected",
-    realtime:  "socket.io active",
+    status: "ok",
+    database: "connected",
+    realtime: "socket.io active",
     routes: [
       "POST /api/auth/register",
       "POST /api/auth/login",
@@ -67,12 +71,11 @@ io.on("connection", (socket) => {
   });
 });
 
-// ─── 404 ─────────────────────────────────────────────────────────────────────
+// 404 & error handler
 app.use((req, res) => {
   res.status(404).json({ message: "Route not found" });
 });
 
-// ─── Error handler ────────────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(err.status || 500).json({
@@ -81,12 +84,7 @@ app.use((err, req, res, next) => {
   });
 });
 
-// ─── HTTP Server + Socket.io ──────────────────────────────────────────────────
-const server = http.createServer(app);
-const io     = setupSocket(server);
-app.set("io", io); // controllers mein io use kar sakte hain
-
-// ─── Start ────────────────────────────────────────────────────────────────────
+// Start server
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log(`\n🚀 Server:    http://localhost:${PORT}`);

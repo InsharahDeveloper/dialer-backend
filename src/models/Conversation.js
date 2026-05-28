@@ -41,3 +41,4 @@ ConversationSchema.virtual("path").get(function () {
 ConversationSchema.set("toJSON", { virtuals: true });
 
 module.exports = mongoose.model("Conversation", ConversationSchema);
+

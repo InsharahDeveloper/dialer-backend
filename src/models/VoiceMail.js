@@ -10,8 +10,12 @@ const VoiceMailSchema = new mongoose.Schema(
 
     // ── NEW: Per-contact thread ke liye ──────────────────────────────────────
     // Conversation se link — Ali ke saath chat aur voicemail ek hi thread mein
-    conversation: { type: mongoose.Schema.Types.ObjectId, ref: "Conversation", default: null },
-
+conversation: { 
+  type: mongoose.Schema.Types.ObjectId, 
+  ref: "Conversation", 
+  default: null, 
+  index: true   // ← ye line add karo
+},
     // Sender info
     from:     { type: String, required: true }, // phone number
     fromName: { type: String, default: ""    }, // display name
@@ -41,3 +45,5 @@ VoiceMailSchema.virtual("path").get(function () {
 VoiceMailSchema.set("toJSON", { virtuals: true });
 
 module.exports = mongoose.model("VoiceMail", VoiceMailSchema);
+
+

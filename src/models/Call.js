@@ -23,8 +23,6 @@ const CallSchema = new mongoose.Schema(
     // Twilio se aata hai
     twilioCallSid: { type: String, default: "" },
     recordingUrl:  { type: String, default: null },
-
-    recordingUrl: { type: String },
     recordingSid: { type: String },
     voicemailUrl: { type: String },
     transcription: { type: String },

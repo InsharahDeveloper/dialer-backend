@@ -41,6 +41,8 @@ const getVoiceMails = async (req, res) => {
 
 // ─── POST /api/voice-mails ────────────────────────────────────────────────────
 // Naya voicemail save + Socket.io se real-time notify
+// ─── POST /api/voice-mails ────────────────────────────────────────────────────
+// Naya voicemail save + Socket.io se real-time notify
 const createVoiceMail = async (req, res) => {
   try {
     const {
@@ -52,40 +54,31 @@ const createVoiceMail = async (req, res) => {
       transcript,
       twilioCallSid,
       twilioRecordingSid,
-      toUserId, // agar dusre user ko notify karna hai
     } = req.body;
 
     if (!from) {
       return res.status(400).json({ message: "from (phone number) required hai" });
     }
 
-    // Contact dhundho
-let contact = null;
+    // Contact lookup logic
+    let contact = null;
+    if (contactId) {
+      contact = await Contact.findOne({ _id: contactId, owner: req.user._id });
+      if (!contact) {
+        return res.status(404).json({ message: "Contact not found with given contactId" });
+      }
+    } else {
+      // No contactId provided: try to find by phone number
+      contact = await Contact.findOne({ owner: req.user._id, phone: from });
+    }
 
-if (contactId) {
-  contact = await Contact.findOne({ _id: contactId, owner: req.user._id });
-  
-  // ✅ FIX: Invalid contactId pe silently fallback mat karo
-  if (!contact) {
-    return res.status(404).json({ message: "Contact nahi mila — contactId invalid hai" });
-  }
-}
-
-// Sirf tab phone se dhundho jab contactId diya hi nahi gaya
-if (!contact && from) {
-  contact = await Contact.findOne({ owner: req.user._id, phone: from });
-}
-
-    // ── Conversation dhundho ya banao (per-contact thread) ────────────────────
-    // Yeh isliye hai taake Ali ke saath voicemails
-    // Ali ki conversation mein hi dikhein
+    // Conversation dhundho ya banao (per-contact thread)
     let conversation = null;
     if (contact) {
       conversation = await Conversation.findOne({
         owner:   req.user._id,
         contact: contact._id,
       });
-
       if (!conversation) {
         conversation = await Conversation.create({
           owner:   req.user._id,
@@ -93,25 +86,27 @@ if (!contact && from) {
         });
       }
 
-      // Conversation ka lastMessage update karo
+      // Update conversation's lastMessage – sender is contact (null)
       await Conversation.findByIdAndUpdate(conversation._id, {
         lastMessage: {
-          text:    `🎤 Voice message (${audioDuration || 0}s)`,
-          type:    "voice",
-          sentAt:  new Date(),
-          senderId: req.user._id,
+          text:     `🎤 Voice message (${audioDuration || 0}s)`,
+          type:     "voice",
+          sentAt:   new Date(),
+          senderId: null, // important: contact sent it, not the owner
         },
+        // Increment unreadCount (new voicemail from contact)
+        $inc: { unreadCount: 1 },
       });
     }
 
-    // VoiceMail save karo
+    // Create voicemail record – fromUser is null (caller is not a logged-in user)
     const voiceMail = await VoiceMail.create({
       owner:              req.user._id,
       contact:            contact?._id        || null,
       conversation:       conversation?._id   || null,
       from,
-      fromName:           fromName            || contact?.name || "",
-      fromUser:           req.user._id,
+      fromName:           fromName            || contact?.name || from,
+      fromUser:           null, // ← Fixed: external caller, not a user
       audioUrl:           audioUrl            || null,
       audioDuration:      audioDuration       || 0,
       transcript:         transcript          || "",
@@ -123,26 +118,21 @@ if (!contact && from) {
     await voiceMail.populate("contact",  "name phone avatar");
     await voiceMail.populate("fromUser", "name avatar");
 
-    // ── Socket.io: Real-time notify ───────────────────────────────────────────
+    // Socket.io real-time notifications
     const io = req.app.get("io");
     if (io) {
-      // 1. Contact ki conversation room mein bhejo
       if (conversation) {
         io.to(`conversation-${conversation._id}`).emit("new-voicemail", {
           voiceMail,
           conversationId: conversation._id,
         });
       }
-
-      // 2. Agar specific user ko notify karna hai (toUserId)
-      if (toUserId) {
-        io.to(`user-${toUserId}`).emit("voicemail-notification", {
-          voiceMail,
-          from:     req.user.name,
-          fromId:   req.user._id,
-          contactId: contact?._id,
-        });
-      }
+      // Also emit to user's personal room for notification badge
+      io.to(`user:${req.user._id}`).emit("voicemail-notification", {
+        voiceMail,
+        from: fromName || contact?.name || from,
+        contactId: contact?._id,
+      });
     }
 
     res.status(201).json({
